@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Bestie — chat v0</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root{--bg:#0b1020;--card:#121a33;--muted:#7f8db3;--text:#e7ecff;--accent:#00d3ff}
+    *{box-sizing:border-box}body{margin:0;background:radial-gradient(1200px 700px at 10% -10%,#16315a22 0%,transparent 60%),radial-gradient(1000px 600px at 90% 10%,#0ad1ff1a 0%,transparent 60%),var(--bg);color:var(--text);font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto}
+    .wrap{max-width:900px;margin:64px auto;padding:0 20px}
+    header{display:flex;align-items:center;gap:12px;margin-bottom:36px}
+    .logo{width:36px;height:36px;border-radius:12px;background:linear-gradient(135deg,#00d3ff,#4f46e5)}
+    h1{font-size:44px;line-height:1.1;margin:12px 0 8px}
+    p.sub{color:var(--muted);margin:0 0 28px}
+    form{display:flex;gap:10px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:10px}
+    input[type="text"]{flex:1;border:none;background:transparent;color:var(--text);font-size:18px;outline:none;padding:10px}
+    button{background:linear-gradient(135deg,#4f46e5,#00d3ff);border:none;color:white;font-weight:600;border-radius:12px;padding:12px 18px;cursor:pointer}
+    .card{margin-top:24px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:18px}
+    .muted{color:var(--muted)}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="logo"></div>
+      <div>
+        <div style="font-weight:700">Bestie</div>
+        <div class="muted">The tomorrow of shopping, today.</div>
+      </div>
+      <div style="margin-left:auto" class="muted">Bestie-chat-v0</div>
+    </header>
+
+    <h1>Ask Bestie anything you want to buy</h1>
+    <p class="sub">Minimal, clean, fast. Paste a product prompt and we’ll handle discovery → curation → checkout.</p>
+
+    <form id="prompt-form">
+      <input id="prompt-input" type="text" placeholder="Try: running shoes under $150" autocomplete="off" />
+      <button type="submit">Send</button>
+      <button id="reset-btn" type="button" style="margin-left:auto;background:#334155">Reset Chat</button>
+    </form>
+
+    <div id="chat" class="card" style="display:none">
+      <div class="muted" style="margin-bottom:8px">Conversation</div>
+      <div id="messages" style="display:flex;flex-direction:column;gap:10px"></div>
+    </div>
+
+    <p class="muted" style="margin-top:28px">
+      Try: <a href="#" data-suggestion="Patagonia Better Sweater navy blue size L">Patagonia Better Sweater…</a> ·
+      <a href="#" data-suggestion="Garmin Forerunner 255">Garmin Forerunner 255…</a> ·
+      <a href="#" data-suggestion="Wireless headphones with ANC under $200">Wireless headphones…</a>
+    </p>
+  </div>
+
+  <script>
+  // ===========================
+  // Config dinâmico de endpoint
+  // ===========================
+  function resolveAPIBase() {
+    // 1) Prioriza ?api=... (ex.: http://localhost:3000/?api=http://127.0.0.1:5050)
+    const qs = new URLSearchParams(location.search);
+    const apiParam = qs.get('api');
+    if (apiParam) {
+      localStorage.setItem('bestie_api', apiParam);
+      return apiParam.replace(/\/+$/, ''); // sem barra no final
+    }
+
+    // 2) Se tiver salvo no navegador, usa
+    const saved = localStorage.getItem('bestie_api');
+    if (saved) return saved.replace(/\/+$/, '');
+
+    // 3) Padrão local: mesma máquina, porta 5050
+    const host = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
+      ? '127.0.0.1'
+      : location.hostname;
+    return `http://${host}:5050`;
+  }
+  const API_BASE = resolveAPIBase();
+
+  // ==============
+  // Elementos UI
+  // ==============
+  const form = document.getElementById('prompt-form');
+  const input = document.getElementById('prompt-input');
+  const chat = document.getElementById('chat');
+  const messagesEl = document.getElementById('messages');
+
+  // Sessão: persiste no localStorage para manter histórico no backend
+  function getSessionId() {
+    let id = localStorage.getItem('bestie_session_id');
+    if (!id) {
+      id = crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2);
+      localStorage.setItem('bestie_session_id', id);
+    }
+    return id;
+  }
+  const SESSION_ID = getSessionId();
+
+  function addMessage(role, content) {
+    const row = document.createElement('div');
+    row.style.cssText = role === 'user' ? 'align-self:flex-end;max-width:80%;background:#2b355a;padding:10px 12px;border-radius:12px' : 'align-self:flex-start;max-width:80%;background:#1a2344;padding:10px 12px;border-radius:12px';
+    row.textContent = content;
+    messagesEl.appendChild(row);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  function addProductCards(results) {
+    if (!Array.isArray(results) || results.length === 0) return;
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-top:8px';
+    results.forEach(item => {
+      const card = document.createElement('a');
+      card.href = item.url;
+      card.target = '_blank';
+      card.rel = 'noopener noreferrer';
+      card.style.cssText = 'text-decoration:none;color:inherit;background:#101833;border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:10px;display:flex;flex-direction:column;gap:8px';
+      const img = document.createElement('img');
+      img.src = item.image_url || '';
+      img.alt = item.title || '';
+      img.style.cssText = 'width:100%;height:140px;object-fit:contain;background:#0e152b;border-radius:8px';
+      const title = document.createElement('div');
+      title.textContent = item.title || 'Product';
+      title.style.cssText = 'font-weight:600;font-size:14px;min-height:40px';
+      const meta = document.createElement('div');
+      const price = item.price != null ? `${item.currency || '$'}${item.price}` : '—';
+      meta.textContent = `${price} · ${item.retailer || 'retailer'}`;
+      meta.className = 'muted';
+      card.appendChild(img);
+      card.appendChild(title);
+      card.appendChild(meta);
+      wrap.appendChild(card);
+    });
+    const row = document.createElement('div');
+    row.style.cssText = 'align-self:flex-start;max-width:100%';
+    row.appendChild(wrap);
+    messagesEl.appendChild(row);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  async function runDiscovery(q) {
+    try {
+      const d = await fetch(`${API_BASE}/discover`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: q, session_id: SESSION_ID })
+      });
+      const dtext = await d.text();
+      if (d.ok) {
+        let payload = {};
+        try { payload = JSON.parse(dtext); } catch(_) {}
+        if (!payload.results || payload.results.length === 0) {
+          addMessage('assistant', 'I could not fetch product tiles for this query. Try a broader phrase or a different product.');
+        } else {
+          addProductCards(payload.results || []);
+        }
+      } else {
+        addMessage('assistant', `Discovery error ${d.status}`);
+      }
+    } catch(_) {
+      addMessage('assistant', 'Discovery failed due to a network error.');
+    }
+  }
+
+  function renderHistory(history) {
+    messagesEl.innerHTML = '';
+    (history || []).forEach(m => addMessage(m.role, m.content));
+  }
+
+  // badge mostrando para onde estamos apontando + saúde do backend
+  let healthStatus = 'unknown';
+  const badge = document.createElement('div');
+  badge.style.cssText = "position:fixed;right:16px;bottom:16px;font:12px/1.4 system-ui;padding:8px 10px;border-radius:10px;background:#00000066;color:#c9d5ff";
+  badge.textContent = `API: ${API_BASE} (health: ${healthStatus})`;
+  document.body.appendChild(badge);
+  async function pingHealth(){
+    try {
+      const r = await fetch(`${API_BASE}/health`);
+      healthStatus = r.ok ? 'ok' : `bad(${r.status})`;
+    } catch(e) {
+      healthStatus = 'down';
+    }
+    badge.textContent = `API: ${API_BASE} (health: ${healthStatus})`;
+  }
+  pingHealth();
+  setInterval(pingHealth, 10000);
+
+  // ==========
+  // Envio
+  // ==========
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const q = input.value.trim();
+    if (!q) return;
+
+    chat.style.display = 'block';
+    addMessage('user', q);
+    addMessage('assistant', 'Bestie is thinking…');
+
+    try {
+      const r = await fetch(`${API_BASE}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: q, session_id: SESSION_ID })
+      });
+      const text = await r.text();
+      if (!r.ok) {
+        messagesEl.lastChild.textContent = `Backend error ${r.status}: ${text || 'no message'}`;
+        return;
+      }
+      let data = {};
+      try { data = JSON.parse(text); } catch(_) {}
+      messagesEl.lastChild.textContent = data?.response || 'No response.';
+      if (data?.history) renderHistory(data.history);
+
+      // Auto discovery
+      await runDiscovery(q);
+      // No token/cost display on frontend (metrics page only)
+    } catch(err) {
+      console.error(err);
+      messagesEl.lastChild.textContent = "Erro ao consultar o Bestie backend.";
+    }
+  });
+
+  // Sugestões de prompt
+  document.querySelectorAll('[data-suggestion]').forEach(a => {
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      input.value = a.getAttribute('data-suggestion') || '';
+      input.focus();
+    });
+  });
+
+  // Reset chat button
+  document.getElementById('reset-btn').addEventListener('click', async () => {
+    try {
+      await fetch(`${API_BASE}/session/reset`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: SESSION_ID })
+      });
+    } catch(_) {}
+    localStorage.removeItem('bestie_session_id');
+    messagesEl.innerHTML = '';
+    chat.style.display = 'none';
+  });
+</script>
+</body>
+</html>
